@@ -25,43 +25,51 @@ public:
     Http2Client(): progress(CallProgress::IN_PROGRESS) {}
 
     void connect(const string & addr, const string & port) {
-        cout << "trying to connect " << endl;
         this->status = CallStatus::SUCCESS;
         std::thread th([&addr, &port, this](){
             session sess(io_service, addr, port);
             sess.on_connect([&sess, this](tcp::resolver::iterator endpoint_it) {
-               std::unique_lock<std::mutex> mlock(mutex_);
-               this->progress = CallProgress::DONE;
-               mlock.unlock();
-               this->cond_.notify_one();
                cout << "connected" << endl;
+               notify_one(CallStatus::SUCCESS);
+
                SYSLOG(LOG_INFO, "connection establised"); 
-               req_post_cb = [&sess](const string & method, 
+               req_post_cb = [&sess, this](const string & method, 
                                     const string & uri, const string & body) {
                   boost::system::error_code ec;
                   header_map h;
                   auto req = sess.submit(ec, method, uri, h); 
-                     req->on_response([](const response & res) {
-                     cout << "received response " << endl;
+                  req->on_response([this](const response & res) {
+                     cout << "rc: " << res.status_code() << endl;
+                     if (res.status_code() != 200) {
+                        notify_one(CallStatus::ERROR);
+                     }
+                     res.on_data([this](const uint8_t * data, size_t len) {
+                        if (len == 0) {
+                            cout << "response data" << endl;
+                            notify_one(CallStatus::SUCCESS);
+                        }
+                     });
                   });
-                  req->on_close([](uint32_t status) {
-                     cout << "req got closed" << endl;
+                  req->on_close([this](uint32_t status) {
+                     cout << "req got closed " << status << endl;
+                     notify_one(CallStatus::ERROR);
                   });
                };
                sess_disconnect_cb = [&sess]() {
                   cout << "shutting down the session" << endl;
-                  sess.shutdown();                  
+                  //sess.shutdown();                  
                };
             });
             sess.on_error([&sess, this](const boost::system::error_code & ec) {
                 std::unique_lock<std::mutex> mlock(mutex_);
-                this->progress = CallProgress::DONE;
-                this->status = CallStatus::ERROR;
-                mlock.unlock();
-                this->cond_.notify_one();
+                notify_one(CallStatus::ERROR);
                 SYSLOG(LOG_INFO, "session connection error: %s\n", ec.value());
             });
             io_service.run();
+            cout << "****service exiting " << endl;
+            while (1) {
+                sleep(1);
+            }
         });
         th.detach();
         std::unique_lock<std::mutex> mlock(mutex_);
@@ -72,12 +80,21 @@ public:
         /* throw an exception if the call was an error */
     }
     /* add data generator callback */
-    void send(string method, string uri, string data) {
+    int send(string method, string uri, string data) {
         if (this->req_post_cb) {
+            std::unique_lock<std::mutex> mlock(mutex_);
+            progress = CallProgress::IN_PROGRESS;
+            mlock.unlock();
             io_service.post([method, uri, data, this]() {
-                cout << method << " " << uri << " " << data << endl;
-                req_post_cb(method, uri, data);
-            });
+                    cout << method << " " << uri << endl;
+                    req_post_cb(method, uri, data);
+                    });
+            mlock.lock();
+            while (progress == CallProgress::IN_PROGRESS) {
+                cond_.wait(mlock);
+            }
+            mlock.unlock();
+            return (int)status;
         }
     }
     void disconnect() {
@@ -89,6 +106,13 @@ public:
     }
     /* disconnect the call */
 private:
+    void notify_one(CallStatus status) {
+        std::unique_lock<std::mutex> mlock(mutex_);
+        this->progress = CallProgress::DONE;
+        this->status = status;
+        mlock.unlock();
+        this->cond_.notify_one();
+    }
     std::atomic<int> sessio_id;
     CallProgress progress;
     CallStatus status;
