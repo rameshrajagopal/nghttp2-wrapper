@@ -27,12 +27,14 @@ int getdiff_time(struct timeval tstart, struct timeval tend)
     return (tdiff.tv_sec * 1000 + tdiff.tv_usec/1000);
 }
 
-int main(int argc, char * argv[])
+#define within(num) (int) ((float) num * random() / (RAND_MAX + 1.0))
+
+ main(int argc, char * argv[])
 {
     std::atomic<int> num_failures {0};
-    if (argc != 5) {
+    if (argc != 7) {
         cout << "Usage: " << endl;
-        cout << argv[0] << " ip port " << endl;
+        cout << argv[0] << " ip port repeat concurrency randomness sleep_in_milli" << endl;
         return -1;
     }
     cout << "Connecting to the server " << endl;
@@ -40,10 +42,13 @@ int main(int argc, char * argv[])
     string master_port = argv[2];
     int num_requests = atoi(argv[3]);
     int num_users = atoi(argv[4]);
+    bool randomness = (atoi(argv[5])) ? true : false;
+    int  sleep_time = atoi(argv[6]);
     client_info_t info[num_users];
 
+    srandom((unsigned) time(NULL));
     for (int num = 0; num < num_users; ++num) {
-        std::thread th([num_requests, master_ip, master_port, &info, num]() {
+        std::thread th([num_requests, master_ip, master_port, &info, num, randomness, sleep_time]() {
             Http2Client client;
             struct timeval tstart;
             struct timeval tend;
@@ -69,6 +74,8 @@ int main(int argc, char * argv[])
                     info[num].total += diff_time;
                     ++info[num].num;
                 }
+                if (randomness) usleep(within(sleep_time * 1000));
+                else usleep(sleep_time * 1000);
             }
             client.disconnect(sess_id);
             getchar();

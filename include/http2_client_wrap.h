@@ -61,25 +61,25 @@ public:
         progress = CallProgress::IN_PROGRESS;
         mlock.unlock();
         io_service.post([method, uri, data, this, sess_id]() {
-                cout << method << " " << uri << endl;
                 boost::system::error_code ec;
                 header_map h;
                 auto req = sessions[sess_id].submit(ec, method, uri, h); 
                 req->on_response([this](const response & res) {
-                    cout << "rc: " << res.status_code() << endl;
                     if (res.status_code() != 200) {
-                    notify_one(CallStatus::ERROR);
+                        cout << "rc: " << res.status_code() << endl;
+                        notify_one(CallStatus::ERROR);
                     }
                     res.on_data([this](const uint8_t * data, size_t len) {
                         if (len == 0) {
-                        cout << "response data" << endl;
-                        notify_one(CallStatus::SUCCESS);
+                            notify_one(CallStatus::SUCCESS);
                         }
                         });
                     });
                 req->on_close([this](uint32_t status) {
-                    cout << "req got closed " << status << endl;
-                    if (status != 0) notify_one(CallStatus::ERROR);
+                    if (status != 0) {
+                        cout << "req close error " << status << endl;
+                        notify_one(CallStatus::ERROR);
+                    }
                 });
         });
         mlock.lock();
