@@ -44,19 +44,22 @@ int getdiff_time(struct timeval tstart, struct timeval tend)
     int num_users = atoi(argv[4]);
     bool randomness = (atoi(argv[5])) ? true : false;
     int  sleep_time = atoi(argv[6]);
-    client_info_t info[num_users];
+
+    vector<client_info_t> info;
 
     srandom((unsigned) time(NULL));
-    for (int num = 0; num < num_users; ++num) {
-        std::thread th([num_requests, master_ip, master_port, &info, num, randomness, sleep_time]() {
+    for (int th_num = 0; th_num < num_users; ++th_num) {
+        client_info_t client;
+        client.min_time = INT_MAX;
+        client.max_time = INT_MIN;
+        client.total = 0;
+        client.failures = 0;
+        client.num = 0;
+        info.push_back(client);
+        std::thread th([num_requests, master_ip, master_port, &info, th_num, randomness, sleep_time]() {
             Http2Client client;
             struct timeval tstart;
             struct timeval tend;
-            info[num].min_time = INT_MAX;
-            info[num].max_time = INT_MIN;
-            info[num].total = 0;
-            info[num].failures = 0;
-            info[num].num = 0;
 
             int sess_id = client.connect(master_ip, master_port);
             for (int num = 0; num < num_requests; ++num) {
@@ -65,14 +68,14 @@ int getdiff_time(struct timeval tstart, struct timeval tend)
                 string uri = "http://" + master_ip + ":" + master_port + "/";
                 gettimeofday(&tstart, NULL);
                 if (client.send(sess_id, "POST", uri, data) != 0) {
-                    ++info[num].failures;
+                    ++info[th_num].failures;
                 } else {
                     gettimeofday(&tend, NULL);
                     int diff_time = getdiff_time(tstart, tend);
-                    if (diff_time < info[num].min_time) info[num].min_time = diff_time;
-                    if (diff_time > info[num].max_time) info[num].max_time = diff_time;
-                    info[num].total += diff_time;
-                    ++info[num].num;
+                    if (diff_time < info[th_num].min_time) info[th_num].min_time = diff_time;
+                    if (diff_time > info[th_num].max_time) info[th_num].max_time = diff_time;
+                    info[th_num].total += diff_time;
+                    ++info[th_num].num;
                 }
                 if (randomness) usleep(within(sleep_time * 1000));
                 else usleep(sleep_time * 1000);
